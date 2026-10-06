@@ -193,6 +193,7 @@ static const m_option_t mp_vo_opt_list[] = {
     {"video-timing-offset", OPT_DOUBLE(timing_offset), M_RANGE(0.0, 1.0)},
     {"video-sync", OPT_CHOICE(video_sync,
         {"audio", VS_DEFAULT},
+        {"pts", VS_PTS},
         {"display-resample", VS_DISP_RESAMPLE},
         {"display-resample-vdrop", VS_DISP_RESAMPLE_VDROP},
         {"display-resample-desync", VS_DISP_RESAMPLE_NONE},

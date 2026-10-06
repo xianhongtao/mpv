@@ -1279,8 +1279,14 @@ void write_video(struct MPContext *mpctx)
     struct vo_frame *frame = vo_frame_ref(&dummy);
 
     double diff = mpctx->past_frames[0].approx_duration;
-    if (opts->untimed || (vo->driver->caps & VO_CAP_UNTIMED))
+    if (opts->untimed || (vo->driver->caps & VO_CAP_UNTIMED)) {
+        if (opts->vo->video_sync == VS_PTS && !mpctx->warned_pts_untimed) {
+            MP_WARN(mpctx, "PTS mode: untimed playback overrides PTS pacing; "
+                           "disable untimed for the VRR experiment.\n");
+            mpctx->warned_pts_untimed = true;
+        }
         diff = -1; // disable frame dropping and aspects of frame timing
+    }
     if (diff >= 0) {
         diff /= mpctx->video_speed;
         frame->duration = MP_TIME_S_TO_NS(MPCLAMP(diff, 0, 10));

@@ -8160,7 +8160,8 @@ Video Sync
     because you can stop it from limiting your FPS
     (see ``mpv_render_context_render()`` documentation).
 
-    This applies only to audio timing modes (e.g. ``--video-sync=audio``). In
+    This applies only to audio timing modes (e.g. ``--video-sync=audio`` or the
+    experimental ``--video-sync=pts``). In
     other modes (``--video-sync=display-...``), video timing relies on vsync
     blocking, and this option is not used.
 
@@ -8205,6 +8206,25 @@ Video Sync
                         it can lead to occasional frame drops or repeats. If
                         audio is disabled, this uses the system clock. This is
                         the default mode.
+    :pts:               Experimental PTS-paced submission for VRR, targeting
+                        ``--vo=gpu-next --gpu-api=vulkan --gpu-context=waylandvk``.
+                        Uses the same audio master clock and A/V correction as
+                        ``audio`` (system clock without audio). Renders early,
+                        then submits at the mapped video PTS, without display
+                        refresh quantization or display-sync speed correction.
+                        With gpu-next on Wayland Vulkan, skips the additional
+                        frame callback wait, even if ``wayland-internal-vsync``
+                        requests it. Retained display-sync frames keep their
+                        original pacing when changing modes.
+                        Swapchain synchronization, presentation feedback and
+                        the existing FIFO/MAILBOX defaults are retained; explicit
+                        ``vulkan-swap-mode`` overrides still apply. This does
+                        not enable tearing or force the compositor to enable
+                        VRR. The driver/compositor can still delay presentation
+                        or apply queue backpressure. Other VOs/contexts are
+                        unverified and may submit before the target time.
+                        Display-sync interpolation is not available in this
+                        mode. Do not combine with ``--untimed`` for VRR testing.
     :display-resample:  Resample audio to match the video. This mode will also
                         try to adjust audio speed to compensate for other drift.
                         (This means it will play the audio at a different speed

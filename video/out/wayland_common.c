@@ -2646,6 +2646,7 @@ static void frame_callback(void *data, struct wl_callback *callback, uint32_t ti
     }
 
     wl->frame_wait = false;
+    wl->frame_wait_start = 0;
     wl->hidden = false;
 }
 
@@ -4281,6 +4282,7 @@ int vo_wayland_control(struct vo *vo, int *events, int request, void *arg)
         if (*events & VO_EVENT_RESIZE) {
             *events |= VO_EVENT_EXPOSE;
             wl->frame_wait = false;
+            wl->frame_wait_start = 0;
             wl->timeout_count = 0;
             wl->hidden = false;
         }
@@ -5007,7 +5009,7 @@ void vo_wayland_uninit(struct vo *vo)
     vo->wl = NULL;
 }
 
-void vo_wayland_wait_frame(struct vo_wayland_state *wl)
+static int64_t frame_wait_timeout(struct vo_wayland_state *wl)
 {
     int64_t vblank_time = 0;
     /* We need some vblank interval to use for the timeout in
@@ -5032,7 +5034,35 @@ void vo_wayland_wait_frame(struct vo_wayland_state *wl)
 
     // Completely arbitrary amount of additional time to wait.
     vblank_time += 0.05 * vblank_time;
-    int64_t finish_time = mp_time_ns() + vblank_time;
+    return vblank_time;
+}
+
+// Retain the old-compositor visibility heuristic without waiting for a frame
+// callback. In particular, do not perform the blocking display roundtrip used
+// by wait_frame() when presentation feedback is unavailable.
+void vo_wayland_poll_frame(struct vo_wayland_state *wl)
+{
+    wayland_dispatch_events(wl, 1, 0);
+    if (xdg_toplevel_get_version(wl->xdg_toplevel) >= 6)
+        return; // use the compositor's suspended state instead
+
+    if (!wl->frame_wait) {
+        wl->frame_wait_start = 0;
+        return;
+    }
+
+    int64_t now = mp_time_ns();
+    if (!wl->frame_wait_start)
+        wl->frame_wait_start = now;
+    // wait_frame() marks hidden after three consecutive callback timeouts.
+    if (now - wl->frame_wait_start >= 3 * frame_wait_timeout(wl))
+        wl->hidden = true;
+}
+
+void vo_wayland_wait_frame(struct vo_wayland_state *wl)
+{
+    wl->frame_wait_start = 0;
+    int64_t finish_time = mp_time_ns() + frame_wait_timeout(wl);
 
     while (wl->frame_wait && finish_time > mp_time_ns()) {
         int64_t poll_time = finish_time - mp_time_ns();

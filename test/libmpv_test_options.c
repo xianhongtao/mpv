@@ -114,6 +114,29 @@ static void test_options_and_properties(void)
         fail("Node: expected 1 but got %d'!\n", result_node.u.flag);
 }
 
+static void test_video_sync(void)
+{
+    const char *modes[] = {
+        "pts", "audio", "display-resample", "display-resample-vdrop",
+        "display-resample-desync", "display-tempo", "display-adrop",
+        "display-vdrop", "display-desync", "desync", "pts", "audio",
+    };
+    for (int i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+        set_property_string("video-sync", modes[i]);
+        check_string("video-sync", modes[i]);
+    }
+    // An intentional parse error must not reach wrap_wait_event(), which
+    // treats unexpected error-level log messages as a test failure.
+    if (mpv_request_log_messages(ctx, "no") < 0)
+        fail("Could not disable logs for invalid-option test\n");
+    int ret = mpv_set_property_string(ctx, "video-sync", "invalid-pts-mode");
+    if (ret >= 0)
+        fail("Invalid video-sync mode was not rejected\n");
+    if (mpv_request_log_messages(ctx, "debug") < 0)
+        fail("Could not restore test logs\n");
+    check_string("video-sync", "audio");
+}
+
 int main(int argc, char *argv[])
 {
     if (argc != 1)
@@ -125,11 +148,16 @@ int main(int argc, char *argv[])
 
     atexit(exit_cleanup);
 
+    const char *sync = "pts";
+    set_option_or_property("video-sync", MPV_FORMAT_STRING, &sync, true);
     initialize();
+    check_string("video-sync", "pts");
 
     const char *fmt = "================ TEST: %s ================\n";
     printf(fmt, "test_options_and_properties");
     test_options_and_properties();
+    printf(fmt, "test_video_sync");
+    test_video_sync();
     printf("================ SHUTDOWN ================\n");
 
     command_string("quit");

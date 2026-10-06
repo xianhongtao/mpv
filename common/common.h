@@ -111,6 +111,8 @@ enum video_sync {
     VS_DISP_VDROP,
     VS_DISP_NONE,
     VS_NONE,
+    // PTS-paced presentation, with the same A/V clock as VS_DEFAULT.
+    VS_PTS,
 };
 
 enum track_flags {

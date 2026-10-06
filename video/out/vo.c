@@ -139,6 +139,7 @@ struct vo_internal {
     bool paused;
     bool visible;
     bool wakeup_on_done;
+    bool warned_pts_backend;
     int queued_events;              // event mask for the user
     int internal_events;            // event mask for us
 
@@ -233,6 +234,14 @@ static void read_opts(struct vo *vo)
     mp_mutex_lock(&in->lock);
     in->timing_offset = (uint64_t)(MP_TIME_S_TO_NS(vo->opts->timing_offset));
     mp_mutex_unlock(&in->lock);
+
+    if (vo->opts->video_sync == VS_PTS && !in->warned_pts_backend &&
+        strcmp(vo->driver->name, "gpu-next") != 0)
+    {
+        MP_WARN(vo, "PTS mode: VRR submission is experimental and only targeted "
+                    "at gpu-next/waylandvk; this VO may submit before flip_page.\n");
+        in->warned_pts_backend = true;
+    }
 }
 
 static void update_opts(void *p)
@@ -988,6 +997,12 @@ static bool render_frame(struct vo *vo)
     in->expecting_vsync = use_vsync;
 
     if (in->dropped_frame) {
+        if (vo->opts->video_sync == VS_PTS)
+            MP_TRACE(vo, "PTS drop: id=%"PRIu64" media=%.9f target=%"PRId64
+                         " now=%"PRId64" duration=%"PRId64"\n",
+                     frame->frame_id,
+                     frame->current ? frame->current->pts : MP_NOPTS_VALUE,
+                     target, now, duration);
         in->drop_count += 1;
         wakeup_core(vo);
     } else {
@@ -1007,6 +1022,7 @@ static bool render_frame(struct vo *vo)
 
         stats_time_start(in->stats, "video-draw");
 
+        vo->frame_display_synced = frame->display_synced;
         in->visible = vo->driver->draw_frame(vo, frame);
 
         stats_time_end(in->stats, "video-draw");
@@ -1015,7 +1031,28 @@ static bool render_frame(struct vo *vo)
 
         stats_time_start(in->stats, "video-flip");
 
+        bool pts_timing = vo->opts->video_sync == VS_PTS &&
+                          !frame->display_synced;
+        int64_t submit_start = pts_timing ? mp_time_ns() : 0;
+        if (pts_timing) {
+            MP_TRACE(vo, "PTS flip: id=%"PRIu64" media=%.9f target=%"PRId64
+                         " start=%"PRId64" late=%"PRId64
+                         " repeat=%d redraw=%d still=%d\n",
+                     frame->frame_id,
+                     frame->current ? frame->current->pts : MP_NOPTS_VALUE,
+                     target, submit_start, submit_start - target,
+                     frame->repeat, frame->redraw, frame->still);
+            MP_STATS(vo, "value %f pts-submit-late",
+                     MP_TIME_NS_TO_S(submit_start - target));
+        }
         vo->driver->flip_page(vo);
+        vo->frame_display_synced = false;
+        if (pts_timing) {
+            int64_t submit_end = mp_time_ns();
+            MP_TRACE(vo, "PTS flip-return: id=%"PRIu64" end=%"PRId64
+                         " blocked=%"PRId64"\n",
+                     frame->frame_id, submit_end, submit_end - submit_start);
+        }
 
         struct vo_vsync_info vsync = {
             .last_queue_display_time = -1,
@@ -1023,6 +1060,12 @@ static bool render_frame(struct vo *vo)
         };
         if (vo->driver->get_vsync)
             vo->driver->get_vsync(vo, &vsync);
+
+        if (pts_timing)
+            MP_TRACE(vo, "PTS feedback: id=%"PRIu64" display_time=%"PRId64
+                         " skipped=%"PRId64" (display_time<=0 means unknown; may refer to an older frame)\n",
+                     frame->frame_id, vsync.last_queue_display_time,
+                     vsync.skipped_vsyncs);
 
         // Make up some crap if presentation feedback is missing.
         if (vsync.last_queue_display_time <= 0)
@@ -1097,8 +1140,13 @@ static void do_redraw(struct vo *vo)
     frame->duration = -1;
     mp_mutex_unlock(&in->lock);
 
+    if (vo->opts->video_sync == VS_PTS)
+        MP_TRACE(vo, "PTS redraw: id=%"PRIu64" full=%d now=%"PRId64"\n",
+                 frame->frame_id, full_redraw, mp_time_ns());
+    vo->frame_display_synced = frame->display_synced;
     vo->driver->draw_frame(vo, frame);
     vo->driver->flip_page(vo);
+    vo->frame_display_synced = false;
 
     if (frame != &dummy && !(vo->driver->caps & VO_CAP_FRAMEOWNER))
         talloc_free(frame);

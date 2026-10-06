@@ -507,6 +507,10 @@ struct vo {
     struct m_config_cache *opts_cache; // cache for ->opts
     struct mp_vo_opts *opts;
 
+    // Timing mode of the frame being drawn/flipped, including retained frames
+    // from before a video-sync option change. Backends must not unpace these.
+    bool frame_display_synced;
+
     bool want_redraw;   // redraw as soon as possible
     int64_t previous_redraw_time;
 

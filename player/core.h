@@ -351,6 +351,7 @@ typedef struct MPContext {
     // update_playback_speed() updates them from the other fields.
     double audio_speed, video_speed;
     bool display_sync_active;
+    bool warned_pts_untimed;
     double audio_drift_compensation;
     double avd_filtered;
     // Timing error (in seconds) due to rounding on vsync boundaries

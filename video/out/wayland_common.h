@@ -113,6 +113,7 @@ struct vo_wayland_state {
     double scaling_factor; // wl->scaling divided by 120
     int resizing_constraint;
     int timeout_count;
+    int64_t frame_wait_start; // nonblocking visibility timeout in PTS mode
     int wakeup_pipe[2];
 
     /* color-management */
@@ -242,6 +243,7 @@ void vo_wayland_sync_swap(struct vo_wayland_state *wl);
 void vo_wayland_uninit(struct vo *vo);
 void vo_wayland_wait_events(struct vo *vo, int64_t until_time_ns);
 void vo_wayland_wait_frame(struct vo_wayland_state *wl);
+void vo_wayland_poll_frame(struct vo_wayland_state *wl);
 void vo_wayland_wakeup(struct vo *vo);
 
 #endif /* MPLAYER_WAYLAND_COMMON_H */

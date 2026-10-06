@@ -1,0 +1,3 @@
+add experimental `--video-sync=pts` for audio-clock/PTS-paced submission; on
+gpu-next/Wayland Vulkan this skips the extra frame callback wait, taking precedence over
+`--wayland-internal-vsync`. Hardware/compositor VRR enablement is external.

@@ -15,6 +15,8 @@
  * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <string.h>
+
 #include "video/out/gpu/context.h"
 #include "video/out/present_sync.h"
 #include "video/out/wayland_common.h"
@@ -57,8 +59,19 @@ static void wayland_vk_swap_buffers(struct ra_ctx *ctx)
     struct vo_wayland_state *wl = ctx->vo->wl;
     struct priv *p = ctx->priv;
 
-    if ((!p->use_fifo && wl->opts->wl_internal_vsync == 1) || wl->opts->wl_internal_vsync == 2)
+    // PTS mode is paced by the VO's target-time wait. A second wait for a
+    // compositor frame callback would reintroduce display-clock pacing.
+    // Keep swapchain synchronization and presentation feedback intact.
+    if (ctx->vo->opts->video_sync == VS_PTS &&
+        !ctx->vo->frame_display_synced &&
+        strcmp(ctx->vo->driver->name, "gpu-next") == 0)
+    {
+        vo_wayland_poll_frame(wl);
+    } else if ((!p->use_fifo && wl->opts->wl_internal_vsync == 1) ||
+               wl->opts->wl_internal_vsync == 2)
+    {
         vo_wayland_wait_frame(wl);
+    }
 
     if (wl->use_present)
         present_sync_swap(wl->present);

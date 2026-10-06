@@ -153,6 +153,8 @@ struct priv {
     bool want_seek_reset;
     bool flush_cache;
     bool frame_pending;
+    bool warned_pts_backend;
+    bool warned_pts_interpolation;
     bool paused;
 
     pl_options pars;
@@ -1348,6 +1350,20 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
 
     struct pl_render_params params = pars->params;
     const struct gl_video_opts *opts = p->opts_cache->opts;
+    if (vo->opts->video_sync == VS_PTS) {
+        if (!p->warned_pts_backend &&
+            strcmp(p->ra_ctx->fns->name, "waylandvk") != 0)
+        {
+            MP_WARN(vo, "PTS mode: VRR experiment targets waylandvk; "
+                        "this context's presentation pacing is unverified.\n");
+            p->warned_pts_backend = true;
+        }
+        if (opts->interpolation && !p->warned_pts_interpolation) {
+            MP_WARN(vo, "PTS mode does not interpolate display-sync frames; "
+                        "use --interpolation=no for the VRR experiment.\n");
+            p->warned_pts_interpolation = true;
+        }
+    }
     bool will_redraw = frame->display_synced && frame->num_vsyncs > 1;
     bool cache_frame = will_redraw || frame->still || p->paused;
     bool can_interpolate = opts->interpolation && frame->display_synced &&
