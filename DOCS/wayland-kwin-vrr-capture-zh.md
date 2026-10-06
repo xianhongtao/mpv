@@ -42,11 +42,18 @@ qdbus6 org.kde.KWin /KWin supportInformation > "$CAP/kwin-support.txt"
 
 ```bash
 measure_vblank() {
+    # 在真正的全屏采样期间读取完整 DRM 状态，不打开任何 GUI。
+    drm_info -j > "$CAP/$name-drm-start.json" 2> "$CAP/$name-drm-start.err"
     timeout -k 2s 12s vbltest
+    measure_status=$?
+    drm_info -j > "$CAP/$name-drm-end.json" 2> "$CAP/$name-drm-end.err"
+    return "$measure_status"
 }
 ```
 
 如果需要 sudo，先在启动测试前完成认证，例如 `sudo -v`。不能让后台采集在全屏播放时等待密码。不要自行增加 sudo，只有原来测量需要它才使用。
+
+新增的 `drm_info -j` 是只读查询，不修改 DRM 属性，当前实机已安装该工具。它保留所有 connector/CRTC 的状态，分析时要用 eDP-1 的 CRTC_ID 找到对应 CRTC，再读 VRR_ENABLED；不要误读另一个未启用 CRTC 的 0。若 JSON 为空或权限不足，请保留 `.err` 文件，不自行改变系统权限。Automatic 策略不等于实际 VRR_ENABLED=1。
 
 定义 mpv 采集函数：
 

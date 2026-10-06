@@ -105,7 +105,7 @@ VRRTest 同样有约 80 ms 的多数 callback receipt 间隔，不能借此声�
 - 鼠标持续移动是稳定 60 Hz 的必要条件：静止组仍然 60 Hz。
 - `display_time=-1` 代表 KWin 没有 presented：原始反馈明确到达。
 
-**尚未确认本轮每组采样时 DRM VRR_ENABLED 的实际值。** supportInformation 只有 Automatic 策略及名义 60.003 Hz，不能代替每组的 kernel 状态。此前用户观察过 VRR_ENABLED=1，但不能无条件当作这四组的同步证据。
+**用户已确认这四组没有同步检查 DRM VRR_ENABLED。** supportInformation 只有 Automatic 策略及名义 60.003 Hz，不能代替每组的 kernel 状态。此前用户观察过 VRR_ENABLED=1，但不能无条件当作这四组的同步证据。下一轮手册的测量函数会在真正全屏采样前后保存 `drm_info -j` 完整状态，按 eDP-1 → CRTC_ID → VRR_ENABLED 关联。
 
 物理 60 Hz 的最终原因仍待区分：
 
@@ -116,18 +116,22 @@ VRRTest 同样有约 80 ms 的多数 callback receipt 间隔，不能借此声�
 
 KWin 的 >=30 Hz 保护是真实源码事实，**本轮尚不能把它定为 60 Hz 根因**。它不禁用 VRR，也不自动制造持续 60 Hz 重绘。
 
-## 6. 最小下一轮：只做两个固定 40 FPS 静止组
+## 6. 最小下一轮：补 VRR 状态的 25 / 40 FPS 静止对照
 
-无需重做四组 25 Hz。沿用手册同一终端中的函数和 CAP：
+无需重做移动组。沿用手册同一终端中的函数和 CAP，但先复制更新后的 `measure_vblank` 定义，以同步记录 DRM 状态。三组串行执行：
 
 ```bash
+# 新标签，不覆盖第一轮的 25 FPS 原始证据。
+capture_vrrtest vrrtest25-drm-still
+# 10 秒内 target FPS 调为 25，其余开关与第一轮相同。
+# 鼠标静止，约 30 秒后 Q 退出。
+
+capture_vrrtest vrrtest40-still
+# 同样操作，但 target FPS 为 40。
+
 # 25fps 输入以 1.6 倍速播放：唯一视频帧提交速率约 40 Hz。
 # 这是诊断，不是 25 FPS 的修复，也没有重复帧。
 capture_mpv mpv40-still 1.6 no
-
-capture_vrrtest vrrtest40-still
-# 10 秒内将 target FPS 改为 40；其余开关与上一轮完全一致。
-# 鼠标静止，运行约 30 秒后 Q 退出。
 ```
 
 分别记录采样期间实际 VRR_ENABLED（若目前无法读，说明即可），保留所有新增日志。
