@@ -478,6 +478,12 @@ bool ra_vk_ctx_init(struct ra_ctx *ctx, struct mpvk_ctx *vk,
     if (p->opts->swap_mode >= 0) // user override
         pl_params.present_mode = p->opts->swap_mode;
 
+    MP_VERBOSE(ctx, "Vulkan swapchain request: preferred_mode=%d requested_mode=%d"
+                    " user_override=%d depth=%d alpha_bits=%d\n",
+               preferred_mode, pl_params.present_mode, p->opts->swap_mode >= 0,
+               pl_params.swapchain_depth, pl_params.alpha_bits);
+    // This is the request to libplacebo, not proof of the final WSI mode.
+    // Use libplacebo's swapchain creation log to check any fallback.
     vk->swapchain = pl_vulkan_create_swapchain(vk->vulkan, &pl_params);
     if (!vk->swapchain)
         goto error;

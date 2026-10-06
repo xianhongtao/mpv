@@ -115,6 +115,9 @@ test('linked-list', linked_list)
 timer = executable('timer', files('timer.c'), include_directories: incdir, link_with: test_utils)
 test('timer', timer)
 
+# Offline diagnostics: no Wayland display, GPU, or additional Python packages.
+test('wayland-vrr-trace', python, args: files('wayland_vrr_trace.py'))
+
 format = executable('format', files('format.c'), include_directories: incdir, link_with: test_utils)
 test('format', format)
 

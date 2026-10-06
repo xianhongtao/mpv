@@ -17,6 +17,8 @@
 
 #include <string.h>
 
+#include "osdep/timer.h"
+
 #include "video/out/gpu/context.h"
 #include "video/out/present_sync.h"
 #include "video/out/wayland_common.h"
@@ -28,6 +30,7 @@
 struct priv {
     struct mpvk_ctx vk;
     bool use_fifo;
+    uint64_t diagnostic_swaps;
 };
 
 static int wayland_vk_color_depth(struct ra_ctx *ctx)
@@ -59,6 +62,17 @@ static void wayland_vk_swap_buffers(struct ra_ctx *ctx)
     struct vo_wayland_state *wl = ctx->vo->wl;
     struct priv *p = ctx->priv;
 
+    MP_TRACE(ctx, "WL swap-boundary: count=%"PRIu64" now=%"PRId64
+                  " surface=%u callback_surface=%u frame_wait=%d hidden=%d"
+                  " frame_display_synced=%d present_enabled=%d clock_accepted=%d"
+                  " present_option=%d callback_count=%"PRIu64"\n",
+             ++p->diagnostic_swaps, mp_time_ns(),
+             wl_proxy_get_id((struct wl_proxy *)wl->surface),
+             wl_proxy_get_id((struct wl_proxy *)wl->callback_surface),
+             wl->frame_wait, wl->hidden, ctx->vo->frame_display_synced,
+             wl->use_present, wl->present_clock, wl->opts->wl_present,
+             wl->frame_callback_count);
+
     // PTS mode is paced by the VO's target-time wait. A second wait for a
     // compositor frame callback would reintroduce display-clock pacing.
     // Keep swapchain synchronization and presentation feedback intact.
@@ -80,8 +94,19 @@ static void wayland_vk_swap_buffers(struct ra_ctx *ctx)
 static void wayland_vk_get_vsync(struct ra_ctx *ctx, struct vo_vsync_info *info)
 {
     struct vo_wayland_state *wl = ctx->vo->wl;
+    int stamped = 0, ready = 0, invalid = 0;
+    for (struct mp_present_entry *entry = wl->present ? wl->present->head : NULL;
+         entry; entry = entry->list_node.next)
+    {
+        stamped += entry->ust > 0;
+        ready += entry->queue_display_time > 0;
+        invalid += entry->queue_display_time < 0;
+    }
     if (wl->use_present)
         present_sync_get_info(wl->present, info);
+    MP_TRACE(ctx, "WL feedback-cache: enabled=%d stamped=%d ready=%d invalid=%d"
+                  " returned_display_time=%"PRId64"\n",
+             wl->use_present, stamped, ready, invalid, info->last_queue_display_time);
 }
 
 static void wayland_vk_uninit(struct ra_ctx *ctx)
@@ -189,6 +214,8 @@ static void wayland_vk_update_render_opts(struct ra_ctx *ctx)
 {
     struct vo_wayland_state *wl = ctx->vo->wl;
     vo_wayland_set_opaque_region(wl, ctx->opts.want_alpha);
+    MP_TRACE(ctx, "WL app-commit: surface=%u reason=render-options buffer=unchanged\n",
+             wl_proxy_get_id((struct wl_proxy *)wl->surface));
     wl_surface_commit(wl->surface);
 }
 

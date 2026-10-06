@@ -164,6 +164,11 @@ struct compositor_format {
 
 struct vo_wayland_feedback_pool {
     struct wp_presentation_feedback **fback;
+    // Diagnostics only: request identity and receipt latency, not a clock input.
+    uint64_t *serial;
+    int64_t *requested_ns;
+    uint64_t next_serial;
+    int64_t last_presented_ns;
     struct vo_wayland_state *wl;
     int last_zero_copy;
     int len;
@@ -1859,6 +1864,11 @@ static void apply_toplevel_config(struct vo_wayland_state *wl)
     bool is_suspended = flags->is_suspended;
     bool is_tiled = flags->is_tiled;
 
+    MP_TRACE(wl, "WL toplevel-state: size=%dx%d fullscreen=%d activated=%d"
+                 " suspended=%d maximized=%d resizing=%d\n",
+             width, height, is_fullscreen, is_activated, is_suspended,
+             is_maximized, is_resizing);
+
     if (is_activated) {
         /*
          * If we get an ACTIVATED state, we know it cannot be
@@ -2563,8 +2573,12 @@ static void presentation_set_clockid(void *data, struct wp_presentation *present
 {
     struct vo_wayland_state *wl = data;
 
+    wl->present_clock_id = clockid;
     if (clockid == CLOCK_MONOTONIC || clockid == CLOCK_MONOTONIC_RAW)
         wl->present_clock = true;
+    MP_VERBOSE(wl, "WL presentation-clock: id=%u accepted=%d version=%u enabled=%d\n",
+               clockid, wl->present_clock,
+               wp_presentation_get_version(presentation), wl->opts->wl_present);
 }
 
 static const struct wp_presentation_listener presentation_listener = {
@@ -2574,6 +2588,20 @@ static const struct wp_presentation_listener presentation_listener = {
 static void feedback_sync_output(void *data, struct wp_presentation_feedback *fback,
                                struct wl_output *output)
 {
+    struct vo_wayland_feedback_pool *pool = data;
+    MP_TRACE(pool->wl, "WL feedback-output: object=%u output=%u\n",
+             wl_proxy_get_id((struct wl_proxy *)fback),
+             wl_proxy_get_id((struct wl_proxy *)output));
+}
+
+static int feedback_slot(struct vo_wayland_feedback_pool *pool,
+                         struct wp_presentation_feedback *fback)
+{
+    for (int i = 0; i < pool->len; i++) {
+        if (pool->fback[i] == fback)
+            return i;
+    }
+    return -1;
 }
 
 static void feedback_presented(void *data, struct wp_presentation_feedback *fback,
@@ -2585,10 +2613,29 @@ static void feedback_presented(void *data, struct wp_presentation_feedback *fbac
     struct vo_wayland_feedback_pool *fback_pool = data;
     struct vo_wayland_state *wl = fback_pool->wl;
 
+    int slot = feedback_slot(fback_pool, fback);
+    int64_t receipt = mp_time_ns();
+    int64_t raw_time = ((uint64_t)tv_sec_hi << 32 | tv_sec_lo) * 1000000000ULL + tv_nsec;
+    MP_TRACE(wl, "WL feedback-presented: object=%u serial=%"PRIu64
+                 " surface=%u clock=%u timestamp=%"PRId64" delta=%"PRId64
+                 " refresh=%u sequence=%"PRIu64" flags=0x%x zero_copy=%d"
+                 " receipt=%"PRId64" request_age=%"PRId64"\n",
+             wl_proxy_get_id((struct wl_proxy *)fback),
+             slot >= 0 ? fback_pool->serial[slot] : 0,
+             wl_proxy_get_id((struct wl_proxy *)wl->callback_surface),
+             wl->present_clock_id, raw_time,
+             fback_pool->last_presented_ns ? raw_time - fback_pool->last_presented_ns : 0,
+             refresh_nsec, (uint64_t)seq_hi << 32 | seq_lo, flags,
+             !!(flags & WP_PRESENTATION_FEEDBACK_KIND_ZERO_COPY), receipt,
+             slot >= 0 ? receipt - fback_pool->requested_ns[slot] : -1);
+    fback_pool->last_presented_ns = raw_time;
+
     bool current_zero_copy = flags & WP_PRESENTATION_FEEDBACK_KIND_ZERO_COPY;
     if (fback_pool->last_zero_copy == -1 || fback_pool->last_zero_copy != current_zero_copy) {
-        MP_DBG(wl, "Presentation was done with %s.\n",
-                 current_zero_copy ? "direct scanout" : "a copy");
+        // Some compositors (including KWin 6.7.5) never report ZERO_COPY,
+        // even for scanout. Its absence is not evidence of composition.
+        MP_DBG(wl, "Presentation ZERO_COPY flag %s (absence does not prove composition).\n",
+               current_zero_copy ? "reported" : "not reported");
         fback_pool->last_zero_copy = current_zero_copy;
     }
 
@@ -2615,6 +2662,12 @@ static void feedback_presented(void *data, struct wp_presentation_feedback *fbac
 static void feedback_discarded(void *data, struct wp_presentation_feedback *fback)
 {
     struct vo_wayland_feedback_pool *fback_pool = data;
+    int slot = feedback_slot(fback_pool, fback);
+    MP_TRACE(fback_pool->wl, "WL feedback-discarded: object=%u serial=%"PRIu64
+                           " request_age=%"PRId64"\n",
+             wl_proxy_get_id((struct wl_proxy *)fback),
+             slot >= 0 ? fback_pool->serial[slot] : 0,
+             slot >= 0 ? mp_time_ns() - fback_pool->requested_ns[slot] : -1);
     fback_pool->last_zero_copy = -1;
     if (fback)
         remove_feedback(fback_pool, fback);
@@ -2632,10 +2685,23 @@ static void frame_callback(void *data, struct wl_callback *callback, uint32_t ti
 {
     struct vo_wayland_state *wl = data;
 
+    int64_t now = mp_time_ns();
+    MP_TRACE(wl, "WL frame-done: callback=%u surface=%u count=%"PRIu64
+                 " time_ms=%u receipt=%"PRId64" delta=%"PRId64
+                 " present_clock=%d present_option=%d\n",
+             callback ? wl_proxy_get_id((struct wl_proxy *)callback) : 0,
+             wl_proxy_get_id((struct wl_proxy *)wl->callback_surface),
+             ++wl->frame_callback_count, time, now,
+             wl->last_frame_callback_ns ? now - wl->last_frame_callback_ns : 0,
+             wl->present_clock, wl->opts->wl_present);
+    wl->last_frame_callback_ns = now;
     if (callback)
         wl_callback_destroy(callback);
 
     wl->frame_callback = wl_surface_frame(wl->callback_surface);
+    MP_TRACE(wl, "WL frame-request: callback=%u surface=%u (pending until commit)\n",
+             wl_proxy_get_id((struct wl_proxy *)wl->frame_callback),
+             wl_proxy_get_id((struct wl_proxy *)wl->callback_surface));
     wl_callback_add_listener(wl->frame_callback, &frame_listener, wl);
 
     wl->use_present = wl->present_clock && wl->opts->wl_present;
@@ -3042,14 +3108,24 @@ static void add_feedback(struct vo_wayland_feedback_pool *fback_pool,
                          struct wp_presentation_feedback *fback)
 {
     for (int i = 0; i < fback_pool->len; ++i) {
-        if (!fback_pool->fback[i]) {
-            fback_pool->fback[i] = fback;
-            break;
-        } else if (i == fback_pool->len - 1) {
-            // Shouldn't happen in practice.
+        if (fback_pool->fback[i] && i != fback_pool->len - 1)
+            continue;
+        if (fback_pool->fback[i]) {
+            // Preserve existing eviction behavior, but make lost feedback visible.
+            MP_TRACE(fback_pool->wl, "WL feedback-evicted: object=%u serial=%"PRIu64"\n",
+                     wl_proxy_get_id((struct wl_proxy *)fback_pool->fback[i]),
+                     fback_pool->serial[i]);
             wp_presentation_feedback_destroy(fback_pool->fback[i]);
-            fback_pool->fback[i] = fback;
         }
+        fback_pool->fback[i] = fback;
+        fback_pool->serial[i] = ++fback_pool->next_serial;
+        fback_pool->requested_ns[i] = mp_time_ns();
+        MP_TRACE(fback_pool->wl, "WL feedback-request: object=%u serial=%"PRIu64
+                               " surface=%u requested=%"PRId64" (pending until commit)\n",
+                 wl_proxy_get_id((struct wl_proxy *)fback), fback_pool->serial[i],
+                 wl_proxy_get_id((struct wl_proxy *)fback_pool->wl->callback_surface),
+                 fback_pool->requested_ns[i]);
+        break;
     }
 }
 
@@ -3196,8 +3272,14 @@ static void clean_feedback_pool(struct vo_wayland_feedback_pool *fback_pool)
 {
     for (int i = 0; i < fback_pool->len; ++i) {
         if (fback_pool->fback[i]) {
+            MP_TRACE(fback_pool->wl, "WL feedback-cancelled: object=%u serial=%"PRIu64
+                                   " reason=pool-clean\n",
+                     wl_proxy_get_id((struct wl_proxy *)fback_pool->fback[i]),
+                     fback_pool->serial[i]);
             wp_presentation_feedback_destroy(fback_pool->fback[i]);
             fback_pool->fback[i] = NULL;
+            fback_pool->serial[i] = 0;
+            fback_pool->requested_ns[i] = 0;
         }
     }
 }
@@ -3516,6 +3598,8 @@ static void remove_feedback(struct vo_wayland_feedback_pool *fback_pool,
         if (fback_pool->fback[i] == fback) {
             wp_presentation_feedback_destroy(fback);
             fback_pool->fback[i] = NULL;
+            fback_pool->serial[i] = 0;
+            fback_pool->requested_ns[i] = 0;
             break;
         }
     }
@@ -4688,6 +4772,10 @@ bool vo_wayland_init(struct vo *vo)
         wl->fback_pool->last_zero_copy = -1,
         wl->fback_pool->fback = talloc_zero_array(wl->fback_pool, struct wp_presentation_feedback *,
                                                   wl->fback_pool->len);
+        wl->fback_pool->serial = talloc_zero_array(wl->fback_pool, uint64_t,
+                                                  wl->fback_pool->len);
+        wl->fback_pool->requested_ns = talloc_zero_array(wl->fback_pool, int64_t,
+                                                        wl->fback_pool->len);
         wl->present = mp_present_initialize(wl, wl->opts, VO_MAX_SWAPCHAIN_DEPTH);
     } else {
         MP_VERBOSE(wl, "Compositor doesn't support the %s protocol!\n",
@@ -4743,6 +4831,17 @@ bool vo_wayland_init(struct vo *vo)
 
     wl->frame_callback = wl_surface_frame(wl->callback_surface);
     wl_callback_add_listener(wl->frame_callback, &frame_listener, wl);
+    MP_VERBOSE(wl, "WL surfaces: main=%u video=%u osd=%u cursor=%u callback_surface=%u"
+                   " initial_callback=%u presentation=%d present_v2=%d fifo=%d app_id=%s\n",
+               wl_proxy_get_id((struct wl_proxy *)wl->surface),
+               wl_proxy_get_id((struct wl_proxy *)wl->video_surface),
+               wl_proxy_get_id((struct wl_proxy *)wl->osd_surface),
+               wl_proxy_get_id((struct wl_proxy *)wl->cursor_surface),
+               wl_proxy_get_id((struct wl_proxy *)wl->callback_surface),
+               wl_proxy_get_id((struct wl_proxy *)wl->frame_callback),
+               !!wl->presentation, wl->present_v2, wl->has_fifo, wl->opts->appid);
+    MP_TRACE(wl, "WL app-commit: surface=%u reason=initial-configure buffer=none\n",
+             wl_proxy_get_id((struct wl_proxy *)wl->surface));
 
     // Do a commit without any buffer attached to ensure the compositor
     // configures the surface.
@@ -4815,6 +4914,9 @@ void vo_wayland_set_opaque_region(struct vo_wayland_state *wl, bool alpha)
 {
     const int32_t width = lrint(mp_rect_w(wl->geometry) / wl->scaling_factor);
     const int32_t height = lrint(mp_rect_h(wl->geometry) / wl->scaling_factor);
+    MP_TRACE(wl, "WL opaque-region: surface=%u alpha=%d size=%dx%d scale=%f\n",
+             wl_proxy_get_id((struct wl_proxy *)wl->surface), alpha,
+             width, height, wl->scaling_factor);
     if (!alpha) {
         struct wl_region *region = wl_compositor_create_region(wl->compositor);
         wl_region_add(region, 0, 0, width, height);

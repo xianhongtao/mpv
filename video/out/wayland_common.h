@@ -180,6 +180,10 @@ struct vo_wayland_state {
     bool present_clock;
     bool present_v2;
     bool use_present;
+    // Diagnostics only; never used to schedule video or synthesize frames.
+    uint32_t present_clock_id;
+    uint64_t frame_callback_count;
+    int64_t last_frame_callback_ns;
 
     /* single-pixel-buffer */
     struct wp_single_pixel_buffer_manager_v1 *single_pixel_manager;
