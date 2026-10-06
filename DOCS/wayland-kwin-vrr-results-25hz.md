@@ -34,7 +34,7 @@ mpv 使用 app_id `mpv`、video content type、主 surface#5；video#6、OSD#7 �
 dmabuf 区别：
 
 - mpv：fourcc 808665665（AB30，10-bit alpha RGB）；alpha 请求为 0，surface 被标为 opaque。
-- VRRTest：fourcc 875713112（XB24，8-bit opaque RGB）。
+- VRRTest：fourcc 875713112（XR24 / XRGB8888，8-bit opaque RGB）。
 - 两者日志中的 modifier 高/低字为 16777216 / 8，均导入 1920x1080 buffer。
 - mpv 的 Vulkan WSI 使用 `wp_fifo_v1.set_barrier/wait_barrier`；这份 VRRTest GL trace 没有对应 FIFO barrier。
 

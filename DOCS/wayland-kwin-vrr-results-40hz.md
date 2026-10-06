@@ -77,7 +77,7 @@ plane0 pitch=15360 = 1920 * 8 bytes
 客户端原始buffer：
 
 - mpv：AB30（ABGR2101010），每像素4字节。
-- VRRTest：XB24（XBGR8888），每像素4字节。
+- VRRTest：XR24（XRGB8888），每像素4字节。
 
 实际primary FB的格式与客户端原始buffer不相同。因此**在这些快照时刻**不是把客户端原始buffer直接挂到primary plane，而是在扫描合成/转换后的16-bit float buffer。不能仅据两次快照证明中间每一帧始终走相同路径，但两次快照均如此、且测量期间40Hz跟随正常，进一步支持direct scanout不是VRR生效的前提。
 
