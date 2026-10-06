@@ -42,7 +42,24 @@ def surface_state():
             "opaque_regions": [], "buffer_scales": [], "transforms": []}
 
 
-def analyze(lines):
+def analyze(lines, start_seconds=0, duration_seconds=None):
+    if not math.isfinite(start_seconds) or start_seconds < 0:
+        raise ValueError('start_seconds must be finite and nonnegative')
+    if duration_seconds is not None and (not math.isfinite(duration_seconds) or duration_seconds <= 0):
+        raise ValueError('duration_seconds must be finite and positive')
+    first_time = None
+
+    def in_window(timestamp):
+        if first_time is None:
+            return False
+        relative_ms = timestamp - first_time
+        return (relative_ms >= start_seconds * 1000 and
+                (duration_seconds is None or
+                 relative_ms < (start_seconds + duration_seconds) * 1000))
+
+    def window_cadence(timestamps):
+        return cadence([t for t in timestamps if in_window(t)])
+
     surfaces = collections.defaultdict(surface_state)
     callbacks = {}
     feedbacks = {}
@@ -66,6 +83,8 @@ def analyze(lines):
             now += day_offset
         else:
             now = float(stamp)
+        if first_time is None:
+            first_time = now
         sent = bool(arrow)
         refs = [(kind, int(number)) for kind, number in OBJECT.findall(args)]
         matches += 1
@@ -138,7 +157,9 @@ def analyze(lines):
                 feedback['replied'] = True
                 state['feedback_' + op] += 1
                 record = {'object': oid, 'event': op, 'latched': feedback['latched'],
-                          'request_to_event_ms': now - feedback['requested_ms']}
+                          'request_to_event_ms': now - feedback['requested_ms'],
+                          'receipt_ms': now,
+                          'relative_receipt_ms': now - first_time}
                 if op == 'presented':
                     values = [int(x.strip(), 0) for x in args.split(',')]
                     if len(values) == 7:
@@ -153,16 +174,20 @@ def analyze(lines):
                 state['pending_feedback'] = [n for n in state['pending_feedback'] if n != oid]
                 feedbacks.pop(oid, None)
     result = {'protocol_lines': matches, 'registry_requests': connection_starts,
-              'metadata': list(dict.fromkeys(metadata)), 'surfaces': {}}
+              'metadata': list(dict.fromkeys(metadata)), 'surfaces': {},
+              'cadence_window': {'start_seconds': start_seconds,
+                                 'duration_seconds': duration_seconds,
+                                 'origin': 'first parsed protocol line',
+                                 'counters_scope': 'whole capture'}}
     for number, state in sorted(surfaces.items()):
         presented = [r['timestamp_ns'] / 1000000 for r in state['feedback_records']
-                     if 'timestamp_ns' in r]
+                     if 'timestamp_ns' in r and in_window(r['receipt_ms'])]
         result['surfaces'][str(number)] = {
-            'commits': cadence(state['commits']), 'buffer_or_damage': cadence(state['updates']),
-            'callback_only_commits': cadence(state['callback_only']),
-            'other_commits': cadence(state['empty']),
+            'commits': window_cadence(state['commits']), 'buffer_or_damage': window_cadence(state['updates']),
+            'callback_only_commits': window_cadence(state['callback_only']),
+            'other_commits': window_cadence(state['empty']),
             'callback_requests': state['callback_requests'],
-            'callback_done': cadence(state['callback_done']),
+            'callback_done': window_cadence(state['callback_done']),
             'attach_requests': state['attach_requests'],
             'damage_requests': state['damage_requests'],
             'feedback_requests': state['feedback_requests'],
@@ -192,16 +217,26 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('logs', nargs='+', type=pathlib.Path)
     parser.add_argument('--json', action='store_true')
+    parser.add_argument('--start-seconds', type=float, default=0,
+                        help='cadence window offset from first protocol line; counters remain whole-capture')
+    parser.add_argument('--duration-seconds', type=float,
+                        help='cadence window duration; default extends to end of capture')
     args = parser.parse_args()
+    if not math.isfinite(args.start_seconds) or args.start_seconds < 0:
+        parser.error('--start-seconds must be finite and nonnegative')
+    if args.duration_seconds is not None and (not math.isfinite(args.duration_seconds) or args.duration_seconds <= 0):
+        parser.error('--duration-seconds must be finite and positive')
     results = {}
     for path in args.logs:
         with path.open(encoding='utf-8', errors='replace') as stream:
-            results[str(path)] = analyze(stream)
+            results[str(path)] = analyze(stream, args.start_seconds, args.duration_seconds)
     if args.json:
         print(json.dumps(results, indent=2))
         return
     for path, result in results.items():
         print(f'\n== {path}: {result["protocol_lines"]} protocol lines ==')
+        print(f'Cadence window: start={args.start_seconds}s, duration={args.duration_seconds}s '
+              '(relative to first protocol line); request/feedback counters cover whole capture.')
         if not result['protocol_lines']:
             print('No Wayland protocol: cannot distinguish Xwayland from an empty/truncated capture.')
         if result['registry_requests'] > 1:

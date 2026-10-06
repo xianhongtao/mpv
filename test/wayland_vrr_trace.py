@@ -81,6 +81,46 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(state['feedback_unreplied'], 0)
         self.assertEqual(state['callback_done']['count'], 0)
 
+    def test_window_keeps_prior_requests_and_separate_feedback_clock(self):
+        lines = '''
+[1000.0] -> wl_surface@7.frame(new id wl_callback@8)
+[1000.0] -> wp_presentation@2.feedback(wl_surface@7, new id wp_presentation_feedback@9)
+[1000.0] -> wl_surface@7.damage(0, 0, 100, 100)
+[1000.0] -> wl_surface@7.commit()
+[1040.0] wl_callback@8.done(4000)
+[1040.0] wp_presentation_feedback@9.presented(0, 40, 0, 16666666, 0, 0, 7)
+[1040.0] -> wl_surface@7.damage(0, 0, 100, 100)
+[1040.0] -> wl_surface@7.commit()
+[1041.0] -> wp_presentation@2.feedback(wl_surface@7, new id wp_presentation_feedback@10)
+[1080.0] -> wl_surface@7.damage(0, 0, 100, 100)
+[1080.0] -> wl_surface@7.commit()
+[1080.0] wp_presentation_feedback@10.presented(0, 40, 40000000, 16666666, 0, 0, 7)
+[1120.0] -> wl_surface@7.damage(0, 0, 100, 100)
+[1120.0] -> wl_surface@7.commit()
+'''.splitlines()
+        result = trace.analyze(lines, start_seconds=.04, duration_seconds=.041)
+        state = result['surfaces']['7']
+        self.assertEqual(state['commits']['count'], 2)
+        self.assertAlmostEqual(state['buffer_or_damage']['median_ms'], 40)
+        self.assertEqual(state['callback_done']['count'], 1)
+        self.assertEqual(state['callback_requests'], 1)
+        self.assertEqual(state['feedback_requests'], 2)
+        self.assertEqual(state['feedback_latched'], 2)
+        self.assertAlmostEqual(state['presentation_timestamps']['median_ms'], 40)
+        self.assertEqual(state['feedback_records'][0]['relative_receipt_ms'], 40)
+        self.assertEqual(result['cadence_window']['counters_scope'], 'whole capture')
+        empty = trace.analyze(lines, start_seconds=5)['surfaces']['7']
+        self.assertEqual(empty['commits']['count'], 0)
+        self.assertEqual(empty['feedback_presented'], 2)
+
+    def test_invalid_window(self):
+        for start in (-1, float('nan'), float('inf')):
+            with self.assertRaises(ValueError):
+                trace.analyze([], start_seconds=start)
+        for duration in (0, -1, float('nan'), float('inf')):
+            with self.assertRaises(ValueError):
+                trace.analyze([], duration_seconds=duration)
+
     def test_midnight_and_empty_log(self):
         lines = '''
 [23:59:59.980000] -> wl_surface#7.damage(0, 0, 100, 100)

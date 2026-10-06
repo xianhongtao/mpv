@@ -168,6 +168,15 @@ python3 TOOLS/wayland-vrr-trace.py --json \
   "$CAP/vrrtest25-moving-wayland.log" \
   > "$CAP/protocol-summary.json"
 
+# 稳态 cadence：mpv 取启动后 5–17 秒；VRRTest 取 15–25 秒。
+# 对象关联仍解析完整日志，request/feedback 计数仍是全程计数。
+python3 TOOLS/wayland-vrr-trace.py --start-seconds=5 --duration-seconds=12 \
+  "$CAP/mpv25-still-wayland.log" "$CAP/mpv25-moving-wayland.log" \
+  > "$CAP/mpv-steady-summary.txt"
+python3 TOOLS/wayland-vrr-trace.py --start-seconds=15 --duration-seconds=10 \
+  "$CAP/vrrtest25-still-wayland.log" "$CAP/vrrtest25-moving-wayland.log" \
+  > "$CAP/vrrtest-steady-summary.txt"
+
 printf '采集目录：%s\n' "$CAP"
 ls -lh "$CAP"
 
