@@ -1,5 +1,12 @@
 # Investigation: 25 Hz mpv submissions versus KWin/DRM at ~60 Hz
 
+**Second matched hardware results:** mpv and native Wayland VRRTest both track
+40 Hz with active-CRTC VRR_ENABLED=1. The captured panel EDID declares a 30–60 Hz
+vertical range, used by KWin as its VRR minimum. Native VRRTest25 now measures
+37.5 Hz, not the first run's 60 Hz; those runs must not be conflated. Primary
+framebuffer snapshots show AB4H rather than either client's original format.
+See the [40 Hz verification and below-range findings](<wayland-kwin-vrr-results-40hz.md>).
+
 **First matched hardware results are now available:** native Wayland VRRTest at
 fixed 25 FPS also measures ~60 Hz, with both stationary and moving cursor.
 Neither client makes extra steady-state callback-only commits. Raw mpv feedback
