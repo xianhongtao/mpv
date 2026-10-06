@@ -1,5 +1,13 @@
 # Investigation: 25 Hz mpv submissions versus KWin/DRM at ~60 Hz
 
+**First matched hardware results are now available:** native Wayland VRRTest at
+fixed 25 FPS also measures ~60 Hz, with both stationary and moving cursor.
+Neither client makes extra steady-state callback-only commits. Raw mpv feedback
+arrives; an independently reproduced present-sync cache backlog explains the
+converted `display_time=-1`. See the [hardware results and next discriminating
+test](<wayland-kwin-vrr-results-25hz.md>). The source hypotheses below should not
+be mistaken for a confirmed physical-output root cause.
+
 ## Scope and evidence status
 
 The PTS scheduler is deliberately unchanged. No frame repetition, extra surface
